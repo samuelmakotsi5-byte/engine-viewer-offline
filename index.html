@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Engine Viewer - Offline</title>
+  <style>
+    :root {
+      --bg: #1a1a1a;
+      --panel-bg: rgba(0,0,0,0.8);
+      --panel-border: #333;
+      --green: #00ff88;
+      --button: #222;
+      --button-border: #444;
+      --text: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, sans-serif;
+      overflow: hidden;
+    }
+
+    #canvas {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      touch-action: none;
+      user-select: none;
+    }
+
+    #panel {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      background: var(--panel-bg);
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--panel-border);
+      line-height: 1.4;
+      font-size: 14px;
+      pointer-events: none;
+    }
+
+    #panel b {
+      color: var(--green);
+    }
+
+    #parts {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn {
+      padding: 8px 12px;
+      background: var(--button);
+      border: 1px solid var(--button-border);
+      color: var(--text);
+      border-radius: 20px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      outline: none;
+    }
+
+    .btn.active {
+      background: var(--green);
+      color: #000;
+      font-weight: bold;
+      border-color: var(--green);
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <div id="panel">
+    👆 <b>DRAG</b> to rotate engine | Tap buttons below to see parts<br>
+    <span id="info">View: Full Engine</span>
+  </div>
+
+  <div id="parts">
+    <button class="btn active" data-part="all" onclick="showPart('all', event)">FULL ENGINE</button>
+    <button class="btn" data-part="block" onclick="showPart('block', event)">BLOCK</button>
+    <button class="btn" data-part="head" onclick="showPart('head', event)">HEAD</button>
+    <button class="btn" data-part="piston" onclick="showPart('piston', event)">PISTONS</button>
+    <button class="btn" data-part="crank" onclick="showPart('crank', event)">CRANKSHAFT</button>
+    <button class="btn" data-part="manifold" onclick="showPart('manifold', event)">MANIFOLDS</button>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let rotY = 0.5;
+    let rotX = -0.3;
+    let isDragging = false;
+    let lastX = 0;
+    let lastY = 0;
+    let selected = 'all';
+
+    const parts = [];
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function shade(hex, amount) {
+      const color = hex.replace('#', '');
+      let r = parseInt(color.substring(0, 2), 16);
+      let g = parseInt(color.substring(2, 4), 16);
+      let b = parseInt(color.substring(4, 6), 16);
+
+      r = Math.max(0, Math.min(255, r + amount));
+      g = Math.max(0, Math.min(255, g + amount));
+      b = Math.max(0, Math.min(255, b + amount));
+
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+
+    function project(x, y, z) {
+      const cosY = Math.cos(rotY);
+      const sinY = Math.sin(rotY);
+      const cosX = Math.cos(rotX);
+      const sinX = Math.sin(rotX);
+
+      let x1 = x * cosY - z * sinY;
+      let z1 = x * sinY + z * cosY;
+
+      let y1 = y * cosX - z1 * sinX;
+      z1 = y * sinX + z1 * cosX;
+
+      const scale = 400 / (400 + z1 * 50);
+      return {
+        x: canvas.width / 2 + x1 * scale * 60,
+        y: canvas.height / 2 + y1 * scale * 60,
+        s: scale,
+        z: z1
+      };
+    }
+
+    function drawBox(part) {
+      const { x, y, z, w, h, d, color, label } = part;
+
+      const points = [
+        project(x - w / 2, y - h / 2, z - d / 2),
+        project(x + w / 2, y - h / 2, z - d / 2),
+        project(x + w / 2, y + h / 2, z - d / 2),
+        project(x - w / 2, y + h / 2, z - d / 2),
+        project(x - w / 2, y - h / 2, z + d / 2),
+        project(x + w / 2, y - h / 2, z + d / 2),
+        project(x + w / 2, y + h / 2, z + d / 2),
+        project(x - w / 2, y + h / 2, z + d / 2)
+      ];
+
+      const faces = [
+        [0, 1, 2, 3, color],
+        [4, 5, 6, 7, shade(color, -15)],
+        [0, 4, 7, 3, shade(color, -25)],
+        [1, 5, 6, 2, shade(color, -35)],
+        [3, 2, 6, 7, shade(color, -10)],
+        [0, 1, 5, 4, shade(color, -20)]
+      ];
+
+      const visibleFaces = faces.map((face) => {
+        const avgZ = face.reduce((sum, idx) => sum + points[idx].z, 0) / face.length;
+        return { face, avgZ };
+      }).sort((a, b) => b.avgZ - a.avgZ);
+
+      visibleFaces.forEach(({ face }) => {
+        const [a, b, c, dIdx, fillColor] = face;
+        ctx.beginPath();
+        ctx.moveTo(points[a].x, points[a].y);
+        ctx.lineTo(points[b].x, points[b].y);
+        ctx.lineTo(points[c].x, points[c].y);
+        ctx.lineTo(points[dIdx].x, points[dIdx].y);
+        ctx.closePath();
+
+        ctx.fillStyle = fillColor;
+        ctx.strokeStyle = '#000';
+        ctx.lineWidth = 1.5;
+        ctx.fill();
+        ctx.stroke();
+      });
+
+      if (label) {
+        const center = project(x, y, z);
+        ctx.fillStyle = 'rgba(255,255,255,0.9)';
+        ctx.font = '10px Arial';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, center.x, center.y - 10);
+      }
+    }
+
+    function buildEngineModel() {
+      parts.push({ label: 'BLOCK', group: 'block', x: 0, y: 15, z: 0, w: 240, h: 120, d: 220, color: '#5fa4e0' });
+      parts.push({ label: 'HEAD', group: 'head', x: 0, y: -80, z: 0, w: 210, h: 28, d: 170, color: '#dfe7ef' });
+      parts.push({ label: 'MANIFOLD', group: 'manifold', x: -125, y: -30, z: 0, w: 25, h: 80, d: 150, color: '#9aa3b5' });
+      parts.push({ label: 'MANIFOLD', group: 'manifold', x: 125, y: -30, z: 0, w: 25, h: 80, d: 150, color: '#9aa3b5' });
+
+      const pistonXs = [-85, -28, 28, 85];
+      pistonXs.forEach((px, idx) => {
+        parts.push({ label: 'PISTON', group: 'piston', x: px, y: 65, z: 0, w: 30, h: 70, d: 30, color: '#f4c65c', phase: idx * 1.2 });
+      });
+
+      parts.push({ label: 'CRANKSHAFT', group: 'crank', x: 0, y: 25, z: 0, w: 180, h: 18, d: 26, color: '#d1b063' });
+    }
+
+    function updateMotion() {
+      const time = performance.now() * 0.004;
+
+      parts.forEach((part) => {
+        if (part.group === 'piston') {
+          part.y = 65 + Math.sin(time * 2.2 + part.phase) * 24;
+          part.z = Math.sin(time * 2.2 + part.phase) * 8;
+        }
+
+        if (part.group === 'crank') {
+          part.z = Math.sin(time * 1.8) * 10;
+        }
+
+        if (part.group === 'manifold') {
+          part.y = -30 + Math.cos(time + part.x * 0.02) * 3;
+        }
+      });
+    }
+
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      updateMotion();
+
+      const visibleParts = parts.filter((part) => {
+        if (selected === 'all') return true;
+        return part.group === selected;
+      });
+
+      visibleParts.sort((a, b) => {
+        const aDepth = project(a.x, a.y, a.z).z;
+        const bDepth = project(b.x, b.y, b.z).z;
+        return aDepth - bDepth;
+      });
+
+      visibleParts.forEach(drawBox);
+      requestAnimationFrame(render);
+    }
+
+    function showPart(partName, event) {
+      selected = partName;
+
+      document.querySelectorAll('.btn').forEach((btn) => {
+        btn.classList.remove('active');
+      });
+
+      if (event && event.currentTarget) {
+        event.currentTarget.classList.add('active');
+      }
+
+      document.getElementById('info').innerHTML = 'View: <b style="color:#00ff88">' + partName.toUpperCase() + '</b> - Drag to look around';
+    }
+
+    canvas.addEventListener('touchstart', (e) => {
+      isDragging = true;
+      lastX = e.touches[0].clientX;
+      lastY = e.touches[0].clientY;
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', (e) => {
+      if (!isDragging) return;
+      const touch = e.touches[0];
+      rotY += (touch.clientX - lastX) * 0.01;
+      rotX += (touch.clientY - lastY) * 0.01;
+      lastX = touch.clientX;
+      lastY = touch.clientY;
+      e.preventDefault();
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', () => {
+      isDragging = false;
+    });
+
+    canvas.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      rotY += (e.clientX - lastX) * 0.01;
+      rotX += (e.clientY - lastY) * 0.01;
+      lastX = e.clientX;
+      lastY = e.clientY;
+    });
+
+    window.addEventListener('mouseup', () => {
+      isDragging = false;
+    });
+
+    buildEngineModel();
+    render();
+  </script>
+</body>
+</html>
