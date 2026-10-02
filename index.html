@@ -178,7 +178,7 @@
 
       const visibleFaces = faces
         .map((face) => {
-          const avgZ = face.reduce((sum, idx) => sum + points[idx].z, 0) / face.length;
+          const avgZ = face.slice(0, 4).reduce((sum, idx) => sum + points[idx].z, 0) / 4;
           return { face, avgZ };
         })
         .sort((a, b) => b.avgZ - a.avgZ);
